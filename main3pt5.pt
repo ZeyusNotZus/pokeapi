@@ -1,0 +1,119 @@
+# type: ignore
+
+import asyncio
+import json
+from pyscript import document, web
+from pyscript.fetch import fetch
+
+
+# ====================================================
+# interface
+# ====================================================
+
+app = document.getElementById("app")
+
+style = document.createElement("style")
+style.innerHTML = """
+    #app {font-family: sans-serif;}
+    .pokedex_grid {display: grid; grid-template-columns: auto auto auto; gap: 50px 100px}
+    .pokemon_box {display: flex; gap: 15px;}
+    .pokemon_image {max-width: 100px; height: auto; object-fit: contain}
+    .pokemon_info h1 {font-size: 30; margin: 0; font-weight: bold;}
+    .pokemon_info p {font-size: 20; margin: 10px 0;}
+"""
+
+search_input = document.createElement("input")
+search_input.type = "text"
+search_input.placeholder = "Search for a Pokemon"
+
+search_button = document.createElement("button")
+search_button.innerText = "Search!"
+search_button.onclick = lambda ev: asyncio.ensure_future(search_pokemon(ev))
+
+pokedex_grid = document.createElement("div")
+pokedex_grid.classList.add("pokedex_grid")
+
+error_box = document.createElement("div")
+
+document.head.appendChild(style)
+app.appendChild(search_input)
+app.appendChild(search_button)
+app.appendChild(error_box)
+app.appendChild(pokedex_grid)
+
+
+# ====================================================
+# functions
+# ====================================================
+
+url = "https://pokeapi.co/api/v2/"
+
+async def get_pokemon_data(pokemon: str):
+    response = await fetch(f"{url}pokemon/{pokemon}")    
+    
+    if response.ok:
+        return await response.json()
+    else:
+        return None
+    
+async def search_pokemon(ev):
+    pokedex_grid.innerHTML = ""
+    error_box.innerHTML = ""
+    pokemon_name = search_input.value.lower()
+    
+    pokemons = get_pokemon_starts_with(pokemon_name)
+    if not pokemons:
+        error_box.innerHTML = "No Pokemon found!"
+        return
+
+    queue = [get_pokemon_data(pokemon) for pokemon in pokemons]
+    
+    results = await asyncio.gather(*queue)
+
+    for data in results:
+        if not data:
+            continue
+
+        display = document.createElement("div")
+
+        name = data["name"].capitalize()
+        types = " | ".join([t["type"]["name"].capitalize() for t in data["types"]])
+        height = data["height"] / 10
+        weight = data["weight"] / 10
+        image = (
+                data["sprites"]["front_default"] 
+                or data["sprites"]["other"]["official-artwork"]["front_default"] 
+                or data["sprites"]["versions"]["generation-ix"]["scarlet-violet"]["front_default"] #Koraidon-limited-build
+        )
+        # No images: Koraidon-sprinting-build, Koraidon-swimming-build, Koraidon-gliding-build, Magearna-original-mega, Tatsugiri-curly-mega, Tatsugiri-droopy-mega
+
+        display.innerHTML = f"""
+            <div class = "pokemon_box">
+                <img src = {image} class = "pokemon_image"> 
+                <div class = "pokemon_info">
+                    <h1>{name}</h1>
+                    <code>{types}</code>
+                    <p>Height: {height}m</p>
+                    <p>Weight: {weight}kg</p>
+                </div>
+            </div>
+        """
+        
+        pokedex_grid.appendChild(display)
+
+async def get_all_pokemon():
+    response = await fetch(f"{url}pokemon?limit=100000")
+    if response.ok:
+        raw_pokedex_data = await response.json()
+
+        pokedex = {raw_pokedex_data["results"][idx]["name"]: idx + 1 for idx in range(raw_pokedex_data["count"])}
+        return pokedex
+
+    else:
+        display.innerText = "Pokedex data fetch error has occured!"
+
+# creates a global pokedex dictionary for fast lookup of existing pokemon
+pokedex = asyncio.run(get_all_pokemon()) 
+
+def get_pokemon_starts_with(query: str):
+    return [k for k, _ in pokedex.items() if k.startswith(query)]
